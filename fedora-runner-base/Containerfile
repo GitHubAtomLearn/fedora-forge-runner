@@ -1,0 +1,26 @@
+ARG BASE_IMAGE=quay.io/fedora/fedora-minimal
+ARG VERSION_ID=43
+
+FROM ${BASE_IMAGE}:${VERSION_ID}
+
+ENV NODEJS_VERSION=24
+
+RUN <<EORUN
+    set -xeuo pipefail
+    rm --force /etc/yum.repos.d/fedora-cisco-openh264.repo
+    dnf --refresh install --assumeyes --allowerasing \
+        --no-docs --setopt=tsflags=nodocs \
+        --setopt=install_weak_deps=False \
+        --setopt=install_weak_deps=0 \
+        --exclude container-selinux --best \
+        nodejs${NODEJS_VERSION} \
+        nodejs-nodemon \
+        nodejs${NODEJS_VERSION}-npm \
+        git-core \
+        tar
+    ln --symbolic /usr/bin/node-${NODEJS_VERSION} /usr/bin/node
+    ln --symbolic /usr/bin/npm-${NODEJS_VERSION} /usr/bin/npm
+    ln --symbolic /usr/bin/npx-${NODEJS_VERSION} /usr/bin/npx
+    dnf clean all
+    rm --recursive --force /tmp /var/lib/dnf /var/cache /var/log
+EORUN

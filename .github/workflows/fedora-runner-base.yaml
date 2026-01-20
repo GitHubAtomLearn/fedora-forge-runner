@@ -1,0 +1,113 @@
+name: "Build Fedora Forge runner base container image"
+
+env:
+  NAME: "fedora-runner-base"
+  REGISTRY: "quay.io/operatement"
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  schedule:
+    - cron:  '0 6 * * *'
+  workflow_dispatch:
+
+permissions: read-all
+
+# Prevent multiple workflow runs from racing
+# to ensure that pushes are made sequentialy for the main branch.
+# Also cancel in progress workflow runs for pull requests only.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-push-image:
+    runs-on: ubuntu-24.04
+    container:
+      image: quay.io/containers/podman
+      options: "--security-opt=label=disable --privileged --user 0:0 --device=/dev/kvm --device=/dev/fuse \
+        --volume /:/run/host:rw --volume /mnt:/mnt --volume /var/run/docker.sock:/var/run/docker.sock \
+        --workdir=/mnt"
+    steps:
+      - name: "Prepare the graphroot storage location"
+        shell: bash
+        run: |
+          # Bind mount /mnt/containers over /var/lib/containers
+          set -xeuo pipefail
+          sudo ls -lah /var/lib/containers
+          sudo mkdir --parents /mnt/containers
+          sudo mount --bind /mnt/containers /var/lib/containers
+          echo -e "\nAvailable disk storage:"
+          sudo df --human-readable /var/lib/containers
+          sudo df --human-readable /mnt/containers
+          sudo lsblk --output NAME,PATH,TYPE,FSTYPE,SIZE,FSSIZE,FSUSED,FSAVAIL,FSUSE%,MOUNTPOINTS
+      - name: "Fixup GitHub homedir"
+        shell: bash
+        run: |
+          set -xeuo pipefail
+          mkdir --parents /github/home/.docker/
+      - name: "Install tools in the container"
+        shell: bash
+        run: |
+          set -xeuo pipefail
+          dnf --refresh install --assumeyes --allowerasing \
+            --no-docs --setopt=tsflags=nodocs \
+            --setopt=install_weak_deps=False \
+            --setopt=install_weak_deps=0 \
+            --exclude container-selinux --best \
+            buildah skopeo git-core
+          dnf clean all
+          rm --recursive --force /tmp /var/lib/dnf /var/cache /var/log
+      - name: "Checkout repo"
+        uses: actions/checkout@v6
+      - name: "Build container image"
+        uses: https://github.com/redhat-actions/buildah-build@v2
+        with:
+          context: ${{ env.NAME }}
+          image: ${{ env.NAME }}
+          tags: latest
+          containerfiles: ${{ env.NAME }}/Containerfile
+          layers: false
+          oci: true
+      - name: "Install cosign"
+        uses: https://github.com/sigstore/cosign-installer@v4.0.0
+        if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      - name: "Login to container registry"
+        uses: https://github.com/redhat-actions/podman-login@v1
+        if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.BOT_USERNAME }}
+          password: ${{ secrets.BOT_SECRET }}
+          auth_file_path: /tmp/auth.json
+      - name: "Push image to container registry"
+        uses: https://github.com/redhat-actions/push-to-registry@v2
+        id: push
+        if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        with:
+          username: ${{ secrets.BOT_USERNAME }}
+          password: ${{ secrets.BOT_SECRET }}
+          image: ${{ env.NAME }}
+          registry: ${{ env.REGISTRY }}
+          tags: 'latest'
+          extra-args: |
+            --compression-format=zstd
+      - name: "Print the outputs of the push action"
+        shell: bash
+        run: |
+          set -xeuo pipefail
+          echo "Image pushed to ${{ steps.push.outputs.registry-paths }}"
+          echo "The pushed image digest ${{ steps.push.outputs.digest }}"
+      - name: "Sign container image"
+        if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -xeuo pipefail
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${{ env.REGISTRY }}/${{ env.NAME }}@${{ steps.push.outputs.digest }}
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
