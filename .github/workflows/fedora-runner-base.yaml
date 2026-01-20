@@ -65,7 +65,10 @@ jobs:
       - name: "Checkout repo"
         uses: actions/checkout@v6
       - name: "Build container image"
-        uses: https://github.com/redhat-actions/buildah-build@v2
+        # Error: Unable to resolve action https:/github.com, repository not found.
+        # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsuses
+        # uses: https://github.com/redhat-actions/buildah-build@v2
+        uses: redhat-actions/buildah-build@v2
         with:
           context: ${{ env.NAME }}
           image: ${{ env.NAME }}
@@ -74,10 +77,10 @@ jobs:
           layers: false
           oci: true
       - name: "Install cosign"
-        uses: https://github.com/sigstore/cosign-installer@v4.0.0
+        uses: sigstore/cosign-installer@v4.0.0
         if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       - name: "Login to container registry"
-        uses: https://github.com/redhat-actions/podman-login@v1
+        uses: redhat-actions/podman-login@v1
         if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.REGISTRY }}
@@ -85,7 +88,7 @@ jobs:
           password: ${{ secrets.BOT_SECRET }}
           auth_file_path: /tmp/auth.json
       - name: "Push image to container registry"
-        uses: https://github.com/redhat-actions/push-to-registry@v2
+        uses: redhat-actions/push-to-registry@v2
         id: push
         if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         with:
